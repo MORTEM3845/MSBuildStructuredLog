@@ -80,6 +80,13 @@ namespace Microsoft.Build.Logging.StructuredLogger
         //    - new record kind: BuildCanceledEvent
         // version 25:
         //    -  add extra information to PropertyInitialValueSetEventArgs and PropertyReassignmentEventArgs and change parsing logic of Message property in them.
+        // version 26:
+        //    - new record kind: LoggersRegistered
+        // version 27:
+        //    - new record kind: MSBuildServerLifecycle
+        // version 28:
+        //    - new record kinds: AssemblyResolutionSearchTrace, AssemblyConflictDependencyDetails,
+        //      AssemblyConflictWarning
 
         // This should be never changed.
         // The minimum version of the binary log reader that can read log of above version.
@@ -87,7 +94,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
 
         // The current version of the binary log representation.
         // Changes with each update of the binary log format.
-        internal const int FileFormatVersion = 25;
+        internal const int FileFormatVersion = 28;
         // The minimum version of the binary log reader that can read log of above version.
         // This should be changed only when the binary log format is changed in a way that would prevent it from being
         // read by older readers. (changing of the individual BuildEventArgs or adding new is fine - as reader can

@@ -722,6 +722,24 @@ namespace Microsoft.Build.Logging.StructuredLogger
                         parent = Build;
                     }
 
+                    if (args is AssemblyConflictWarningEventArgs conflictWarning)
+                    {
+                        var structuredWarning = new AssemblyConflictWarningNode
+                        {
+                            SimpleAssemblyName = Intern(conflictWarning.SimpleAssemblyName),
+                            LossReason = Intern(conflictWarning.LossReason.ToString()),
+                            VictorFusionName = Intern(conflictWarning.Victor.FusionName),
+                            VictorFullPath = Intern(conflictWarning.Victor.FullPath),
+                            VictimFusionName = Intern(conflictWarning.Victim.FusionName),
+                            VictimFullPath = Intern(conflictWarning.Victim.FullPath),
+                        };
+                        Populate(structuredWarning, args, args.Message);
+                        structuredWarning.AddChild(MessageProcessor.CreateAssemblyConflictReferenceNode("Victor", conflictWarning.Victor));
+                        structuredWarning.AddChild(MessageProcessor.CreateAssemblyConflictReferenceNode("Victim", conflictWarning.Victim));
+                        parent.AddChild(structuredWarning);
+                        return;
+                    }
+
                     var warning = new Warning();
 
                     string text = args.Message;

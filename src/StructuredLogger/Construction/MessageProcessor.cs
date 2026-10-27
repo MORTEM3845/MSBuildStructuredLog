@@ -52,6 +52,123 @@ namespace Microsoft.Build.Logging.StructuredLogger
             folder.AddChild(node);
         }
 
+        private void ProcessAssemblyResolutionSearchTrace(AssemblyResolutionSearchTraceEventArgs args)
+        {
+            string summary = $"Assembly resolution search: {args.RequestedAssemblyName}";
+            if (!string.IsNullOrEmpty(args.TargetProcessorArchitecture))
+            {
+                summary += $" (target architecture: {args.TargetProcessorArchitecture})";
+            }
+
+            var node = new AssemblyResolutionSearchTraceNode
+            {
+                Text = Intern(summary),
+                RequestedAssemblyName = Intern(args.RequestedAssemblyName),
+                TargetProcessorArchitecture = Intern(args.TargetProcessorArchitecture),
+                Timestamp = args.Timestamp,
+            };
+
+            foreach (AssemblyResolutionSearchAttempt attempt in args.SearchAttempts)
+            {
+                string text = $"{attempt.Result}: {attempt.FileNameAttempted} (search path: {attempt.SearchPath})";
+                if (!string.IsNullOrEmpty(attempt.ParentAssembly))
+                {
+                    text += $"; parent: {attempt.ParentAssembly}";
+                }
+                if (!string.IsNullOrEmpty(attempt.AssemblyName))
+                {
+                    text += $"; assembly identity: {attempt.AssemblyName}";
+                }
+                if (!string.IsNullOrEmpty(attempt.ProcessorArchitecture))
+                {
+                    text += $"; architecture: {attempt.ProcessorArchitecture}";
+                }
+                if (attempt.IsAssemblyFoldersExSearch)
+                {
+                    text += "; AssemblyFoldersEx";
+                }
+                node.AddChild(new AssemblyResolutionSearchAttemptNode
+                {
+                    Text = Intern(text),
+                    FileNameAttempted = Intern(attempt.FileNameAttempted),
+                    SearchPath = Intern(attempt.SearchPath),
+                    ParentAssembly = Intern(attempt.ParentAssembly),
+                    AssemblyName = Intern(attempt.AssemblyName),
+                    Result = Intern(attempt.Result.ToString()),
+                    ProcessorArchitecture = Intern(attempt.ProcessorArchitecture),
+                    IsAssemblyFoldersExSearch = attempt.IsAssemblyFoldersExSearch,
+                });
+            }
+
+            TreeNode parent = args.BuildEventContext == null ? null : GetTask(args);
+            parent ??= construction.Build;
+            parent.AddChild(node);
+        }
+
+        private void ProcessAssemblyConflictDependencyDetails(AssemblyConflictDependencyDetailsMessageEventArgs args)
+        {
+            var node = new AssemblyConflictDependencyDetailsNode
+            {
+                Text = Intern($"Assembly conflict details: {args.Victor.FusionName} wins over {args.Victim.FusionName}"),
+                VictorFusionName = Intern(args.Victor.FusionName),
+                VictorFullPath = Intern(args.Victor.FullPath),
+                VictimFusionName = Intern(args.Victim.FusionName),
+                VictimFullPath = Intern(args.Victim.FullPath),
+                Timestamp = args.Timestamp,
+            };
+            node.AddChild(CreateAssemblyConflictReferenceNode("Victor", args.Victor));
+            node.AddChild(CreateAssemblyConflictReferenceNode("Victim", args.Victim));
+
+            TreeNode parent = args.BuildEventContext == null ? null : GetTask(args);
+            parent ??= construction.Build;
+            parent.AddChild(node);
+        }
+
+        internal static AssemblyConflictReferenceNode CreateAssemblyConflictReferenceNode(
+            string role,
+            AssemblyConflictReferenceDetails details)
+        {
+            var node = new AssemblyConflictReferenceNode
+            {
+                Text = $"{role}: {details.FusionName}",
+                Role = role,
+                FusionName = details.FusionName,
+                FullPath = details.FullPath,
+                IsPrimary = details.IsPrimary,
+                IsResolved = details.IsResolved,
+                UnresolvedPrimaryItemSpec = details.UnresolvedPrimaryItemSpec,
+            };
+
+            if (!string.IsNullOrEmpty(details.FullPath))
+            {
+                node.AddChild(new Item { Text = $"Full path: {details.FullPath}" });
+            }
+            node.AddChild(new Item { Text = $"Primary: {details.IsPrimary}; resolved: {details.IsResolved}" });
+            if (!string.IsNullOrEmpty(details.UnresolvedPrimaryItemSpec))
+            {
+                node.AddChild(new Item { Text = $"Unresolved primary item: {details.UnresolvedPrimaryItemSpec}" });
+            }
+            foreach (string sourceItemSpec in details.PrimarySourceItemSpecs)
+            {
+                node.AddChild(new Item { Text = $"Primary source item: {sourceItemSpec}" });
+            }
+            foreach (AssemblyConflictDependee dependee in details.Dependees)
+            {
+                var dependeeNode = new AssemblyConflictDependeeNode
+                {
+                    Text = $"Depended on by: {dependee.DependeeFullPath}",
+                    FullPath = dependee.DependeeFullPath,
+                };
+                foreach (string sourceItemSpec in dependee.SourceItemSpecs)
+                {
+                    dependeeNode.AddChild(new Item { Text = $"Source item: {sourceItemSpec}" });
+                }
+                node.AddChild(dependeeNode);
+            }
+
+            return node;
+        }
+
         public void Process(BuildMessageEventArgs args)
         {
             if (args == null)
@@ -69,6 +186,18 @@ namespace Microsoft.Build.Logging.StructuredLogger
             if (args is MSBuildServerLifecycleEventArgs serverLifecycle)
             {
                 ProcessMSBuildServerLifecycle(serverLifecycle);
+                return;
+            }
+
+            if (args is AssemblyResolutionSearchTraceEventArgs searchTrace)
+            {
+                ProcessAssemblyResolutionSearchTrace(searchTrace);
+                return;
+            }
+
+            if (args is AssemblyConflictDependencyDetailsMessageEventArgs conflictDetails)
+            {
+                ProcessAssemblyConflictDependencyDetails(conflictDetails);
                 return;
             }
 

@@ -73,6 +73,164 @@ namespace Microsoft.Build.UnitTests
         }
 
         [Fact]
+        public void AssemblyResolutionSearchTrace_RoundTripsStructuredAttempts()
+        {
+            var args = new AssemblyResolutionSearchTraceEventArgs(
+                "Example, Version=1.0.0.0",
+                "x64",
+                new[]
+                {
+                    new AssemblyResolutionSearchAttempt("Example.dll", "{HintPathFromItem}", null, null,
+                        AssemblyResolutionSearchResult.FileNotFound, null, false),
+                    new AssemblyResolutionSearchAttempt("C:\\lib\\Example.dll", "{HintPathFromItem}", null,
+                        "Example, Version=2.0.0.0", AssemblyResolutionSearchResult.FusionNamesDidNotMatch, "MSIL", false),
+                },
+                "ResolveAssemblyReference",
+                MessageImportance.Low,
+                DateTime.UtcNow);
+
+            AssemblyResolutionSearchTraceEventArgs result = RoundTripRecord<AssemblyResolutionSearchTraceEventArgs>(args, BinaryLogger.FileFormatVersion);
+
+            result.RequestedAssemblyName.Should().Be(args.RequestedAssemblyName);
+            result.TargetProcessorArchitecture.Should().Be("x64");
+            result.SearchAttempts.Should().HaveCount(2);
+            result.SearchAttempts[0].Result.Should().Be(AssemblyResolutionSearchResult.FileNotFound);
+            result.SearchAttempts[1].SearchPath.Should().Be("{HintPathFromItem}");
+            result.SearchAttempts[1].AssemblyName.Should().Be("Example, Version=2.0.0.0");
+            result.SearchAttempts[1].ProcessorArchitecture.Should().Be("MSIL");
+            BinLogReader.ToBinaryLogRecordKind(result).Should().Be(BinaryLogRecordKind.AssemblyResolutionSearchTrace);
+        }
+
+        [Fact]
+        public void AssemblyConflictDependencyDetails_RoundTripsReferencesAndDependees()
+        {
+            var args = new AssemblyConflictDependencyDetailsMessageEventArgs(
+                CreateConflictReference("Example, Version=2.0.0.0", "C:\\lib\\Example.dll", true, true,
+                    null, new[] { "Example" }, new[] { new AssemblyConflictDependee("C:\\lib\\Parent.dll", new[] { "Parent" }) }),
+                CreateConflictReference("Example, Version=1.0.0.0", "C:\\old\\Example.dll", false, true,
+                    null, Array.Empty<string>(), Array.Empty<AssemblyConflictDependee>()),
+                "ResolveAssemblyReference",
+                MessageImportance.Low,
+                DateTime.UtcNow);
+
+            AssemblyConflictDependencyDetailsMessageEventArgs result = RoundTripRecord<AssemblyConflictDependencyDetailsMessageEventArgs>(args, BinaryLogger.FileFormatVersion);
+
+            result.Victor.FusionName.Should().Be("Example, Version=2.0.0.0");
+            result.Victor.PrimarySourceItemSpecs.Should().ContainSingle().Which.Should().Be("Example");
+            result.Victor.Dependees.Should().ContainSingle();
+            result.Victor.Dependees[0].DependeeFullPath.Should().Be("C:\\lib\\Parent.dll");
+            result.Victor.Dependees[0].SourceItemSpecs.Should().ContainSingle().Which.Should().Be("Parent");
+            result.Victim.FullPath.Should().Be("C:\\old\\Example.dll");
+            BinLogReader.ToBinaryLogRecordKind(result).Should().Be(BinaryLogRecordKind.AssemblyConflictDependencyDetails);
+        }
+
+        [Fact]
+        public void AssemblyConflictWarning_RoundTripsDiagnosticAndConflictFields()
+        {
+            var args = new AssemblyConflictWarningEventArgs(
+                "Example",
+                AssemblyConflictLossReason.HadLowerVersion,
+                CreateConflictReference("Example, Version=2.0.0.0", "C:\\lib\\Example.dll", true, true,
+                    null, new[] { "Example" }, Array.Empty<AssemblyConflictDependee>()),
+                CreateConflictReference("Example, Version=1.0.0.0", "C:\\old\\Example.dll", false, true,
+                    null, Array.Empty<string>(), Array.Empty<AssemblyConflictDependee>()),
+                "MSB3277",
+                "Project.csproj",
+                12,
+                3,
+                "Help",
+                "ResolveAssemblyReference",
+                DateTime.UtcNow);
+
+            AssemblyConflictWarningEventArgs result = RoundTripRecord<AssemblyConflictWarningEventArgs>(args, BinaryLogger.FileFormatVersion);
+
+            result.SimpleAssemblyName.Should().Be("Example");
+            result.LossReason.Should().Be(AssemblyConflictLossReason.HadLowerVersion);
+            result.Code.Should().Be("MSB3277");
+            result.File.Should().Be("Project.csproj");
+            result.LineNumber.Should().Be(12);
+            result.ColumnNumber.Should().Be(3);
+            result.Victor.FusionName.Should().Be("Example, Version=2.0.0.0");
+            result.Victim.FusionName.Should().Be("Example, Version=1.0.0.0");
+            BinLogReader.ToBinaryLogRecordKind(result).Should().Be(BinaryLogRecordKind.AssemblyConflictWarning);
+        }
+
+        [Fact]
+        public void Format28_ReadsV27RecordsAndStructuredRarRecordsTogether()
+        {
+            BinaryLogger.FileFormatVersion.Should().Be(28);
+            ((int)BinaryLogRecordKind.AssemblyResolutionSearchTrace).Should().Be(37);
+            ((int)BinaryLogRecordKind.AssemblyConflictDependencyDetails).Should().Be(38);
+            ((int)BinaryLogRecordKind.AssemblyConflictWarning).Should().Be(39);
+
+            using var stream = new MemoryStream();
+            using var writer = new BinaryWriter(stream, System.Text.Encoding.UTF8, leaveOpen: true);
+            var eventWriter = new BuildEventArgsWriter(writer);
+            eventWriter.Write(new BuildMessageEventArgs("A record defined before format 28", null, "MSBuild", MessageImportance.Low));
+            eventWriter.Write(new AssemblyResolutionSearchTraceEventArgs(
+                "Example", null, Array.Empty<AssemblyResolutionSearchAttempt>(), "ResolveAssemblyReference", MessageImportance.Low, DateTime.UtcNow));
+            writer.Flush();
+            stream.Position = 0;
+
+            using var reader = new Logging.StructuredLogger.BuildEventArgsReader(new BinaryReader(stream), 28);
+            reader.Read().Should().BeOfType<BuildMessageEventArgs>().Which.Message.Should().Be("A record defined before format 28");
+            reader.Read().Should().BeOfType<AssemblyResolutionSearchTraceEventArgs>();
+            reader.Read().Should().BeNull();
+        }
+
+        [Fact]
+        public void Format27_SkipsRecordKindsIntroducedInFormat28()
+        {
+            using var stream = new MemoryStream();
+            using (var writer = new BinaryWriter(stream, System.Text.Encoding.UTF8, leaveOpen: true))
+            {
+                foreach (int recordKind in new[] { 37, 38, 39 })
+                {
+                    Serialization.Write7BitEncodedInt(writer, recordKind);
+                    Serialization.Write7BitEncodedInt(writer, 0); // length-framed unknown record with an empty payload
+                }
+                writer.Write((byte)BinaryLogRecordKind.EndOfFile);
+            }
+
+            stream.Position = 0;
+            var errors = new List<BinaryLogReaderErrorEventArgs>();
+            using var reader = new Logging.StructuredLogger.BuildEventArgsReader(new BinaryReader(stream), 27)
+            {
+                SkipUnknownEvents = true,
+            };
+            reader.RecoverableReadError += errors.Add;
+
+            reader.Read().Should().BeNull();
+            errors.Select(error => (int)error.RecordKind).Should().Equal(37, 38, 39);
+            errors.Should().OnlyContain(error => error.ErrorType == ReaderErrorType.UnknownEventType);
+        }
+
+        private static T RoundTripRecord<T>(BuildEventArgs args, int fileFormatVersion) where T : BuildEventArgs
+        {
+            using var stream = new MemoryStream();
+            using (var writer = new BinaryWriter(stream, System.Text.Encoding.UTF8, leaveOpen: true))
+            {
+                new BuildEventArgsWriter(writer).Write(args);
+                writer.Flush();
+            }
+
+            stream.Position = 0;
+            using var reader = new Logging.StructuredLogger.BuildEventArgsReader(new BinaryReader(stream), fileFormatVersion);
+            return reader.Read().Should().BeOfType<T>().Subject;
+        }
+
+        private static AssemblyConflictReferenceDetails CreateConflictReference(
+            string fusionName,
+            string fullPath,
+            bool isPrimary,
+            bool isResolved,
+            string unresolvedPrimaryItemSpec,
+            IReadOnlyList<string> primarySourceItemSpecs,
+            IReadOnlyList<AssemblyConflictDependee> dependees)
+            => new AssemblyConflictReferenceDetails(
+                fusionName, fullPath, isPrimary, isResolved, unresolvedPrimaryItemSpec, primarySourceItemSpecs, dependees);
+
+        [Fact]
         public void TestBuildTreeStructureCount()
         {
             var binLog = GetTestFile("1.binlog");

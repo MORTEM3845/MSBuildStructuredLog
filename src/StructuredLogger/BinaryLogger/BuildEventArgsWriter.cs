@@ -201,6 +201,7 @@ namespace Microsoft.Build.Logging.StructuredLogger
         {
             switch (e)
             {
+                case AssemblyConflictWarningEventArgs rarConflictWarning: return Write(rarConflictWarning);
                 case BuildMessageEventArgs buildMessage: return Write(buildMessage);
                 case TaskStartedEventArgs taskStarted: return Write(taskStarted);
                 case TaskFinishedEventArgs taskFinished: return Write(taskFinished);
@@ -502,10 +503,30 @@ namespace Microsoft.Build.Logging.StructuredLogger
             return BinaryLogRecordKind.Warning;
         }
 
+        private BinaryLogRecordKind Write(AssemblyConflictWarningEventArgs e)
+        {
+            WriteBuildEventArgsFields(e, writeMessage: false);
+            WriteDeduplicatedString(e.Subcategory);
+            WriteDeduplicatedString(e.Code);
+            WriteDeduplicatedString(e.File);
+            WriteDeduplicatedString(e.ProjectFile);
+            Write(e.LineNumber);
+            Write(e.ColumnNumber);
+            Write(e.EndLineNumber);
+            Write(e.EndColumnNumber);
+            WriteDeduplicatedString(e.SimpleAssemblyName);
+            Write((int)e.LossReason);
+            WriteAssemblyConflictReferenceDetails(e.Victor);
+            WriteAssemblyConflictReferenceDetails(e.Victim);
+            return BinaryLogRecordKind.AssemblyConflictWarning;
+        }
+
         private BinaryLogRecordKind Write(BuildMessageEventArgs e)
         {
             switch (e)
             {
+                case AssemblyResolutionSearchTraceEventArgs searchTrace: return Write(searchTrace);
+                case AssemblyConflictDependencyDetailsMessageEventArgs conflictDetails: return Write(conflictDetails);
                 case FileUsedEventArgs responseFileUsed: return Write(responseFileUsed);
                 case TaskParameterEventArgs taskParameter: return Write(taskParameter);
                 case ProjectImportedEventArgs projectImported: return Write(projectImported);
@@ -521,6 +542,71 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 default: // actual BuildMessageEventArgs
                     WriteMessageFields(e, writeImportance: true);
                     return BinaryLogRecordKind.Message;
+            }
+        }
+
+        private BinaryLogRecordKind Write(AssemblyResolutionSearchTraceEventArgs e)
+        {
+            WriteMessageFields(e, writeMessage: false, writeImportance: true);
+            WriteDeduplicatedString(e.RequestedAssemblyName);
+            WriteDeduplicatedString(e.TargetProcessorArchitecture);
+            Write(e.SearchAttempts.Count);
+            AssemblyResolutionSearchAttempt previous = null;
+            foreach (AssemblyResolutionSearchAttempt attempt in e.SearchAttempts)
+            {
+                var unchangedContext = attempt.GetUnchangedContext(previous);
+                Write((byte)unchangedContext);
+                WriteDeduplicatedString(attempt.FileNameAttempted);
+                if ((unchangedContext & AssemblyResolutionSearchAttemptContext.SearchPathUnchanged) == 0)
+                {
+                    WriteDeduplicatedString(attempt.SearchPath);
+                }
+                if ((unchangedContext & AssemblyResolutionSearchAttemptContext.ParentAssemblyUnchanged) == 0)
+                {
+                    WriteDeduplicatedString(attempt.ParentAssembly);
+                }
+                WriteDeduplicatedString(attempt.AssemblyName);
+                Write((int)attempt.Result);
+                WriteDeduplicatedString(attempt.ProcessorArchitecture);
+                if ((unchangedContext & AssemblyResolutionSearchAttemptContext.AssemblyFoldersExUnchanged) == 0)
+                {
+                    Write(attempt.IsAssemblyFoldersExSearch);
+                }
+                previous = attempt;
+            }
+
+            return BinaryLogRecordKind.AssemblyResolutionSearchTrace;
+        }
+
+        private BinaryLogRecordKind Write(AssemblyConflictDependencyDetailsMessageEventArgs e)
+        {
+            WriteMessageFields(e, writeMessage: false, writeImportance: true);
+            WriteAssemblyConflictReferenceDetails(e.Victor);
+            WriteAssemblyConflictReferenceDetails(e.Victim);
+            return BinaryLogRecordKind.AssemblyConflictDependencyDetails;
+        }
+
+        private void WriteAssemblyConflictReferenceDetails(AssemblyConflictReferenceDetails details)
+        {
+            WriteDeduplicatedString(details.FusionName);
+            WriteDeduplicatedString(details.FullPath);
+            Write(details.IsPrimary);
+            Write(details.IsResolved);
+            WriteDeduplicatedString(details.UnresolvedPrimaryItemSpec);
+            Write(details.PrimarySourceItemSpecs.Count);
+            foreach (string itemSpec in details.PrimarySourceItemSpecs)
+            {
+                WriteDeduplicatedString(itemSpec);
+            }
+            Write(details.Dependees.Count);
+            foreach (AssemblyConflictDependee dependee in details.Dependees)
+            {
+                WriteDeduplicatedString(dependee.DependeeFullPath);
+                Write(dependee.SourceItemSpecs.Count);
+                foreach (string itemSpec in dependee.SourceItemSpecs)
+                {
+                    WriteDeduplicatedString(itemSpec);
+                }
             }
         }
 

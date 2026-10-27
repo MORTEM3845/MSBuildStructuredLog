@@ -469,6 +469,9 @@ namespace Microsoft.Build.Logging.StructuredLogger
                 BinaryLogRecordKind.BuildCanceled => ReadBuildCanceledEventArgs(),
                 BinaryLogRecordKind.LoggersRegistered => ReadLoggersRegisteredEventArgs(),
                 BinaryLogRecordKind.MSBuildServerLifecycle => ReadMSBuildServerLifecycleEventArgs(),
+                BinaryLogRecordKind.AssemblyResolutionSearchTrace when _fileFormatVersion >= 28 => ReadAssemblyResolutionSearchTraceEventArgs(),
+                BinaryLogRecordKind.AssemblyConflictDependencyDetails when _fileFormatVersion >= 28 => ReadAssemblyConflictDependencyDetailsEventArgs(),
+                BinaryLogRecordKind.AssemblyConflictWarning when _fileFormatVersion >= 28 => ReadAssemblyConflictWarningEventArgs(),
                 _ => null,
                 
             };
@@ -1512,6 +1515,129 @@ namespace Microsoft.Build.Logging.StructuredLogger
             SetCommonFields(e, fields);
             e.ProjectFile = fields.ProjectFile;
 
+            return e;
+        }
+
+        private BuildEventArgs ReadAssemblyResolutionSearchTraceEventArgs()
+        {
+            var fields = ReadBuildEventArgsFields(readImportance: true);
+            string requestedAssemblyName = ReadDeduplicatedString() ?? string.Empty;
+            string targetProcessorArchitecture = ReadDeduplicatedString();
+
+            int count = ReadInt32();
+            var attempts = new AssemblyResolutionSearchAttempt[count];
+            AssemblyResolutionSearchAttempt previous = null;
+            for (int i = 0; i < count; i++)
+            {
+                var unchangedContext = (AssemblyResolutionSearchAttemptContext)_binaryReader.ReadByte();
+                var attempt = new AssemblyResolutionSearchAttempt(
+                    ReadDeduplicatedString(),
+                    (unchangedContext & AssemblyResolutionSearchAttemptContext.SearchPathUnchanged) != 0 ? previous?.SearchPath : ReadDeduplicatedString(),
+                    (unchangedContext & AssemblyResolutionSearchAttemptContext.ParentAssemblyUnchanged) != 0 ? previous?.ParentAssembly : ReadDeduplicatedString(),
+                    ReadDeduplicatedString(),
+                    (AssemblyResolutionSearchResult)ReadInt32(),
+                    ReadDeduplicatedString(),
+                    (unchangedContext & AssemblyResolutionSearchAttemptContext.AssemblyFoldersExUnchanged) != 0 ? previous?.IsAssemblyFoldersExSearch ?? false : ReadBoolean());
+                attempts[i] = attempt;
+                previous = attempt;
+            }
+
+            var e = new AssemblyResolutionSearchTraceEventArgs(
+                requestedAssemblyName,
+                targetProcessorArchitecture,
+                attempts,
+                fields.SenderName ?? string.Empty,
+                fields.Importance,
+                fields.Timestamp);
+            SetCommonFields(e, fields);
+            e.ProjectFile = fields.ProjectFile;
+            return e;
+        }
+
+        private AssemblyConflictDependee ReadAssemblyConflictDependee()
+        {
+            string dependeeFullPath = ReadDeduplicatedString();
+            int count = ReadInt32();
+            var sourceItemSpecs = new string[count];
+            for (int i = 0; i < count; i++)
+            {
+                sourceItemSpecs[i] = ReadDeduplicatedString() ?? string.Empty;
+            }
+
+            return new AssemblyConflictDependee(dependeeFullPath ?? string.Empty, sourceItemSpecs);
+        }
+
+        private AssemblyConflictReferenceDetails ReadAssemblyConflictReferenceDetails()
+        {
+            string fusionName = ReadDeduplicatedString();
+            string fullPath = ReadDeduplicatedString();
+            bool isPrimary = ReadBoolean();
+            bool isResolved = ReadBoolean();
+            string unresolvedPrimaryItemSpec = ReadDeduplicatedString();
+
+            int primarySourceItemSpecCount = ReadInt32();
+            var primarySourceItemSpecs = new string[primarySourceItemSpecCount];
+            for (int i = 0; i < primarySourceItemSpecCount; i++)
+            {
+                primarySourceItemSpecs[i] = ReadDeduplicatedString() ?? string.Empty;
+            }
+
+            int dependeeCount = ReadInt32();
+            var dependees = new AssemblyConflictDependee[dependeeCount];
+            for (int i = 0; i < dependeeCount; i++)
+            {
+                dependees[i] = ReadAssemblyConflictDependee();
+            }
+
+            return new AssemblyConflictReferenceDetails(
+                fusionName ?? string.Empty,
+                fullPath,
+                isPrimary,
+                isResolved,
+                unresolvedPrimaryItemSpec,
+                primarySourceItemSpecs,
+                dependees);
+        }
+
+        private BuildEventArgs ReadAssemblyConflictDependencyDetailsEventArgs()
+        {
+            var fields = ReadBuildEventArgsFields(readImportance: true);
+            var victor = ReadAssemblyConflictReferenceDetails();
+            var victim = ReadAssemblyConflictReferenceDetails();
+            var e = new AssemblyConflictDependencyDetailsMessageEventArgs(
+                victor,
+                victim,
+                fields.SenderName ?? string.Empty,
+                fields.Importance,
+                fields.Timestamp);
+            SetCommonFields(e, fields);
+            e.ProjectFile = fields.ProjectFile;
+            return e;
+        }
+
+        private BuildEventArgs ReadAssemblyConflictWarningEventArgs()
+        {
+            var fields = ReadBuildEventArgsFields();
+            ReadDiagnosticFields(fields);
+
+            string simpleAssemblyName = ReadDeduplicatedString() ?? string.Empty;
+            var lossReason = (AssemblyConflictLossReason)ReadInt32();
+            var victor = ReadAssemblyConflictReferenceDetails();
+            var victim = ReadAssemblyConflictReferenceDetails();
+            var e = new AssemblyConflictWarningEventArgs(
+                simpleAssemblyName,
+                lossReason,
+                victor,
+                victim,
+                fields.Code ?? string.Empty,
+                fields.File,
+                fields.LineNumber,
+                fields.ColumnNumber,
+                fields.HelpKeyword,
+                fields.SenderName ?? string.Empty,
+                fields.Timestamp);
+            SetCommonFields(e, fields);
+            e.ProjectFile = fields.ProjectFile;
             return e;
         }
 
